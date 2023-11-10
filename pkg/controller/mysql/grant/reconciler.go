@@ -52,6 +52,7 @@ const (
 	errCreateGrant  = "cannot create grant"
 	errRevokeGrant  = "cannot revoke grant"
 	errCurrentGrant = "cannot show current grants"
+	errNoUser       = "user doesn't exist"
 
 	allPrivileges      = "ALL PRIVILEGES"
 	errCodeNoSuchGrant = 1141
@@ -257,6 +258,36 @@ func (c *external) Create(ctx context.Context, mg resource.Managed) (managed.Ext
 	username := *cr.Spec.ForProvider.User
 	dbname := defaultIdentifier(cr.Spec.ForProvider.Database)
 	table := defaultIdentifier(cr.Spec.ForProvider.Table)
+
+	observed := &v1alpha1.UserParameters{
+		ResourceOptions: &v1alpha1.ResourceOptions{},
+	}
+
+	userQuery := "SELECT " +
+		"max_questions, " +
+		"max_updates, " +
+		"max_connections, " +
+		"max_user_connections " +
+		"FROM mysql.user WHERE User = ?"
+	err := c.db.Scan(ctx,
+		xsql.Query{
+			String: userQuery,
+			Parameters: []interface{}{
+				username,
+			},
+		},
+		&observed.ResourceOptions.MaxQueriesPerHour,
+		&observed.ResourceOptions.MaxUpdatesPerHour,
+		&observed.ResourceOptions.MaxConnectionsPerHour,
+		&observed.ResourceOptions.MaxUserConnections,
+	)
+
+	if xsql.IsNoRows(err) {
+		return managed.ExternalCreation{}, errors.New(errNoUser)
+	}
+	if err != nil {
+		return managed.ExternalCreation{}, err
+	}
 
 	privileges, grantOption := getPrivilegesString(cr.Spec.ForProvider.Privileges.ToStringSlice())
 	binlog := cr.Spec.ForProvider.BinLog
